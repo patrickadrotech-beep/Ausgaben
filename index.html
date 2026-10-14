@@ -1,0 +1,253 @@
+
+<!DOCTYPE html>
+<html lang="de-CH">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#176b52">
+  <link rel="manifest" href="./manifest.json">
+  <title>Mein Ausgabenbuch</title>
+  <style>
+    :root { --green:#176b52; --bg:#f3f6f4; --red:#b42318; }
+    * { box-sizing:border-box; }
+    body {
+      margin:0; font-family:Arial,sans-serif; background:var(--bg);
+      color:#1d2925; line-height:1.45;
+    }
+    header { background:var(--green); color:white; padding:24px 18px; }
+    header h1 { margin:0 0 5px; font-size:25px; }
+    header p { margin:0; opacity:.9; }
+    main { max-width:650px; margin:auto; padding:16px; }
+    .card {
+      background:white; border-radius:14px; padding:17px;
+      margin-bottom:16px; box-shadow:0 2px 9px #0000000b;
+    }
+    h2 { font-size:19px; margin:0 0 14px; }
+    label { display:block; font-weight:bold; margin:12px 0 5px; }
+    input, select, button {
+      width:100%; font:inherit; border-radius:9px; padding:12px;
+    }
+    input, select { border:1px solid #cbd5d0; background:white; }
+    button { border:0; cursor:pointer; font-weight:bold; }
+    .primary { background:var(--green); color:white; margin-top:16px; }
+    .secondary { background:#e5eee9; color:#174d3d; }
+    .summary { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .stat { background:#edf5f0; border-radius:10px; padding:12px; }
+    .stat small { display:block; color:#4a6257; }
+    .stat strong { display:block; font-size:20px; margin-top:5px; overflow-wrap:anywhere; }
+    .entry { border-top:1px solid #e5eae7; padding:13px 0; }
+    .entry:first-child { border-top:0; }
+    .entry-top { display:flex; justify-content:space-between; gap:10px; }
+    .entry-title { font-weight:bold; overflow-wrap:anywhere; }
+    .amount { font-weight:bold; white-space:nowrap; }
+    .meta { font-size:13px; color:#5e6e66; margin-top:5px; }
+    .delete { width:auto; padding:7px 10px; margin-top:9px;
+      color:var(--red); background:#fff0ee; font-size:13px; }
+    .empty { color:#64746b; text-align:center; padding:20px 0; }
+    .filter-row { display:flex; gap:10px; align-items:end; }
+    .filter-row > div { flex:1; min-width:0; }
+    footer { text-align:center; color:#65756c; font-size:12px; padding:8px 15px 25px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Mein Ausgabenbuch</h1>
+  <p>Alle Ausgaben im Überblick – in Schweizer Franken</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Neue Ausgabe</h2>
+    <form id="expense-form">
+      <label for="description">Beschreibung</label>
+      <input id="description" maxlength="100" placeholder="z. B. Einkauf im Supermarkt" required>
+
+      <label for="amount">Betrag (CHF)</label>
+      <input id="amount" type="number" min="0.01" max="100000000" step="0.01"
+        placeholder="z. B. 25.50" inputmode="decimal" required>
+
+      <label for="category">Kategorie</label>
+      <select id="category">
+        <option>Lebensmittel</option>
+        <option>Wohnen</option>
+        <option>Transport</option>
+        <option>Gesundheit</option>
+        <option>Freizeit</option>
+        <option>Kleidung</option>
+        <option>Rechnungen</option>
+        <option>Restaurant</option>
+        <option>Haushalt</option>
+        <option>Sonstiges</option>
+      </select>
+
+      <button class="primary" type="submit">Ausgabe speichern</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Übersicht</h2>
+    <div class="summary">
+      <div class="stat"><small>Gesamtausgaben</small><strong id="total">CHF 0.00</strong></div>
+      <div class="stat"><small>Anzahl Ausgaben</small><strong id="count">0</strong></div>
+      <div class="stat"><small>Durchschnitt pro Ausgabe</small><strong id="average">CHF 0.00</strong></div>
+      <div class="stat"><small>Ausgaben im aktuellen Monat</small><strong id="month-total">CHF 0.00</strong></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Meine Ausgaben</h2>
+    <div class="filter-row">
+      <div>
+        <label for="month">Monat anzeigen</label>
+        <input id="month" type="month">
+      </div>
+      <button type="button" class="secondary" id="all-button">Alle</button>
+    </div>
+    <div id="entries" aria-live="polite"></div>
+  </section>
+</main>
+
+<footer>
+  Deine Einträge werden lokal in diesem Browser gespeichert.
+  Es gibt keine automatische Cloud-Sicherung.
+</footer>
+
+<script>
+(() => {
+  const KEY = "mein-ausgabenbuch-v1";
+  const $ = id => document.getElementById(id);
+  const money = n => new Intl.NumberFormat("de-CH", {
+    style:"currency", currency:"CHF"
+  }).format(n);
+
+  let expenses = [];
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) || "[]");
+    if (Array.isArray(saved)) expenses = saved.filter(e =>
+      e && typeof e.id === "string" &&
+      typeof e.description === "string" &&
+      Number.isFinite(e.amount) &&
+      typeof e.category === "string" &&
+      typeof e.date === "string"
+    );
+  } catch (e) {
+    expenses = [];
+  }
+
+  const now = new Date();
+  $("month").value =
+    `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+
+  function save() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(expenses));
+      return true;
+    } catch (e) {
+      alert("Speichern fehlgeschlagen. Prüfe den verfügbaren Speicherplatz.");
+      return false;
+    }
+  }
+
+  function render() {
+    const total = expenses.reduce((s,e) => s + e.amount, 0);
+    const month = $("month").value;
+    const monthExpenses = expenses.filter(e => e.date.slice(0,7) === month);
+    const monthTotal = monthExpenses.reduce((s,e) => s + e.amount, 0);
+
+    $("total").textContent = money(total);
+    $("count").textContent = expenses.length;
+    $("average").textContent = money(expenses.length ? total / expenses.length : 0);
+    $("month-total").textContent = money(monthTotal);
+
+    const list = $("entries");
+    list.replaceChildren();
+    const shown = monthExpenses.slice().sort((a,b) => b.date.localeCompare(a.date));
+
+    if (!shown.length) {
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "Für diesen Monat sind noch keine Ausgaben erfasst.";
+      list.appendChild(empty);
+      return;
+    }
+
+    shown.forEach(e => {
+      const item = document.createElement("div");
+      item.className = "entry";
+
+      const top = document.createElement("div");
+      top.className = "entry-top";
+
+      const title = document.createElement("div");
+      title.className = "entry-title";
+      title.textContent = e.description;
+
+      const amount = document.createElement("div");
+      amount.className = "amount";
+      amount.textContent = money(e.amount);
+
+      top.append(title, amount);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = e.category + " · " +
+        new Date(e.date).toLocaleString("de-CH");
+
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "delete";
+      del.textContent = "Ausgabe löschen";
+      del.addEventListener("click", () => {
+        if (confirm(`Möchtest du «${e.description}» wirklich löschen?`)) {
+          expenses = expenses.filter(x => x.id !== e.id);
+          if (save()) render();
+        }
+      });
+
+      item.append(top, meta, del);
+      list.appendChild(item);
+    });
+  }
+
+  $("expense-form").addEventListener("submit", event => {
+    event.preventDefault();
+    const description = $("description").value.trim();
+    const amount = Number($("amount").value);
+    if (!description || !Number.isFinite(amount) || amount <= 0) {
+      alert("Bitte gib eine Beschreibung und einen gültigen Betrag ein.");
+      return;
+    }
+
+    expenses.push({
+      id: Date.now().toString() + "-" + Math.random().toString(36).slice(2),
+      description,
+      amount: Math.round(amount * 100) / 100,
+      category: $("category").value,
+      date: new Date().toISOString()
+    });
+
+    if (save()) {
+      $("expense-form").reset();
+      render();
+    }
+  });
+
+  $("month").addEventListener("change", render);
+  $("all-button").addEventListener("click", () => {
+    $("month").value = "";
+    render();
+  });
+
+  render();
+})();
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(error => {
+      console.error("Offline-Modus konnte nicht aktiviert werden:", error);
+    });
+  });
+}
+</script>
+</body>
+</html>
